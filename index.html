@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DroneOS — Quadcopter Flight Simulator</title>
+  <meta name="description" content="Realistic 3D quadcopter drone simulator with physics engine, Arduino code editor, and mobile Wi-Fi controller.">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- QR Code library - use older qrcodejs that's guaranteed to work -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <!-- Socket.io client -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <!-- ═══════════════════════════════════════════════════════════════════
+       TOP BAR
+  ═══════════════════════════════════════════════════════════════════ -->
+  <header class="app-header">
+    <div class="header-brand">
+      <svg class="brand-icon" viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="4" fill="#e94560"/>
+        <rect x="6" y="15" width="20" height="2" rx="1" fill="#4a9eff" opacity="0.7"/>
+        <rect x="15" y="6" width="2" height="20" rx="1" fill="#4a9eff" opacity="0.7"/>
+        <circle cx="7"  cy="7"  r="3" fill="#e94560" opacity="0.9"/>
+        <circle cx="25" cy="7"  r="3" fill="#e94560" opacity="0.9"/>
+        <circle cx="7"  cy="25" r="3" fill="#00ff88" opacity="0.9"/>
+        <circle cx="25" cy="25" r="3" fill="#00ff88" opacity="0.9"/>
+      </svg>
+      <span class="brand-name">DroneOS</span>
+      <span class="brand-sub">Quadcopter Simulator</span>
+    </div>
+    <div class="header-badges">
+      <div class="badge physics-badge">⚡ Real Physics</div>
+      <div class="badge engine-badge">Three.js + Cannon-es</div>
+    </div>
+    <div class="header-status">
+      <div class="status-indicator" id="server-status">
+        <span class="status-dot connected"></span>
+        <span>Server Live</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       MAIN GRID
+  ═══════════════════════════════════════════════════════════════════ -->
+  <main class="app-grid">
+
+    <!-- ── LEFT: 3D Simulator ────────────────────────────────────────── -->
+    <section class="panel sim-panel" id="sim-panel">
+      <!-- HUD overlay -->
+      <div class="sim-hud-overlay" id="sim-hud"></div>
+
+      <!-- Camera mode badge -->
+      <div class="cam-mode-badge" id="cam-mode-badge">
+        <span>📷</span> <span id="cam-mode-text">FREE</span>
+      </div>
+
+      <!-- Wind indicator -->
+      <div class="wind-badge" id="wind-badge" style="display:none">
+        💨 WIND GUST
+      </div>
+
+      <!-- Sim controls overlay -->
+      <div class="sim-controls-overlay">
+        <button class="sim-btn" id="btn-reset" title="Reset Drone (R)">
+          ↺ Reset
+        </button>
+        <button class="sim-btn" id="btn-gust" title="Wind Gust (G)">
+          💨 Gust
+        </button>
+        <button class="sim-btn" id="btn-cam" title="Toggle Camera Mode (C)">
+          📷 Cam Lock
+        </button>
+      </div>
+
+      <!-- Canvas injected by Three.js renderer -->
+    </section>
+
+    <!-- ── TOP RIGHT: Editor + Settings ─────────────────────────────── -->
+    <section class="panel editor-panel" id="editor-outer">
+      <!-- Physics settings bar (always visible) -->
+      <div class="settings-bar" id="settings-bar"></div>
+      <!-- Monaco editor panel -->
+      <div class="editor-inner" id="editor-panel"></div>
+    </section>
+
+    <!-- ── BOTTOM RIGHT: Controller ──────────────────────────────────── -->
+    <section class="panel ctrl-panel-wrap" id="ctrl-panel"></section>
+
+  </main>
+
+  <!-- Import map for ES modules — resolves bare specifiers to CDN URLs -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/",
+      "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+    }
+  }
+  </script>
+
+  <!-- Bootstrap -->
+  <script type="module" src="js/main.js"></script>
+
+  <!-- Overlay button wiring (non-module) -->
+  <script>
+    // These buttons wire after main.js inits the simulator
+    // Using window events to bridge module/non-module
+    window.addEventListener('sim-ready', () => {});
+
+    document.getElementById('btn-reset')?.addEventListener('click', () => {
+      window.dispatchEvent(new CustomEvent('sim-action', { detail: 'reset' }));
+    });
+    document.getElementById('btn-gust')?.addEventListener('click', () => {
+      window.dispatchEvent(new CustomEvent('sim-action', { detail: 'gust' }));
+    });
+    document.getElementById('btn-cam')?.addEventListener('click', () => {
+      window.dispatchEvent(new CustomEvent('sim-action', { detail: 'camera' }));
+    });
+  </script>
+</body>
+</html>

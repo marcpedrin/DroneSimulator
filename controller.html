@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>DroneOS — Mobile Controller</title>
+  <meta name="description" content="DJI-style Wi-Fi drone controller">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    /* ── Reset & tokens ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #060b14;
+      --panel:    #0a0f1e;
+      --border:   rgba(74,158,255,0.2);
+      --red:      #e94560;
+      --blue:     #4a9eff;
+      --green:    #00ff88;
+      --amber:    #f5a623;
+      --text:     #e2e8f0;
+      --dim:      #4a6080;
+      --font:     'Inter', sans-serif;
+      --mono:     'JetBrains Mono', monospace;
+    }
+
+    html, body {
+      height: 100%; width: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* ── Top HUD bar ── */
+    .hud-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      background: rgba(6,11,20,0.95);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    .hud-logo {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--red);
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+
+    .hud-fields {
+      display: flex;
+      gap: 12px;
+      flex: 1;
+      justify-content: center;
+    }
+
+    .hud-field {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+    .hud-label { font-size: 8px; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+    .hud-value { font-size: 13px; font-weight: 700; font-family: var(--mono); color: var(--blue); }
+
+    .conn-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      color: var(--dim);
+      flex-shrink: 0;
+    }
+    .conn-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--dim);
+    }
+    .conn-dot.live {
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(0,255,136,0.6);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    /* ── Main layout ── */
+    .controller-wrap {
+      position: fixed;
+      top: 44px; bottom: 0; left: 0; right: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 8px;
+      gap: 8px;
+    }
+
+    /* ── Sticks area ── */
+    .sticks-row {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    /* ── Center panel ── */
+    .center-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .aux-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .aux-btn {
+      border-radius: 8px;
+      padding: 10px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: var(--font);
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 2px solid;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .aux-btn .btn-icon { font-size: 16px; }
+
+    .btn-arm {
+      background: rgba(233,69,96,0.08);
+      border-color: rgba(233,69,96,0.4);
+      color: var(--red);
+      grid-column: 1 / 3;
+    }
+    .btn-arm.active {
+      background: rgba(0,255,136,0.12);
+      border-color: var(--green);
+      color: var(--green);
+      box-shadow: 0 0 16px rgba(0,255,136,0.4);
+    }
+    .btn-land {
+      background: rgba(74,158,255,0.06);
+      border-color: rgba(74,158,255,0.3);
+      color: var(--blue);
+    }
+    .btn-rth {
+      background: rgba(245,166,35,0.06);
+      border-color: rgba(245,166,35,0.3);
+      color: var(--amber);
+    }
+
+    .btn-arm:active, .btn-land:active, .btn-rth:active {
+      transform: scale(0.96);
+    }
+
+    /* ── Motor bars ── */
+    .motor-bars {
+      display: flex;
+      gap: 4px;
+      align-items: flex-end;
+      height: 40px;
+    }
+    .motor-bar-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      width: 22px;
+    }
+    .motor-bar-track {
+      width: 10px;
+      height: 30px;
+      background: rgba(74,158,255,0.08);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+    .motor-bar-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--blue);
+      border-radius: 2px;
+      transition: height 0.08s;
+      height: 0%;
+    }
+    .motor-label {
+      font-size: 8px;
+      color: var(--dim);
+      font-family: var(--mono);
+    }
+
+    /* ── Joystick ── */
+    .joystick-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      max-width: 160px;
+    }
+
+    .joystick-outer {
+      position: relative;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      background: radial-gradient(circle, #0f2040, #060b14);
+      box-shadow: inset 0 0 30px rgba(0,0,0,0.6), 0 0 20px rgba(74,158,255,0.08);
+      touch-action: none;
+    }
+
+    .joystick-label {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 8px;
+      color: var(--dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      pointer-events: none;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    .joystick-knob {
+      position: absolute;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #5a8aee, #1a3a8c);
+      border: 2px solid rgba(74,158,255,0.7);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 0 16px rgba(74,158,255,0.3);
+      transform: translate(-50%, -50%);
+      top: 50%; left: 50%;
+      pointer-events: none;
+      transition: box-shadow 0.1s;
+    }
+
+    .joystick-knob.active {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 0 24px rgba(74,158,255,0.6);
+    }
+
+    .stick-axis-labels {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .axis-label {
+      position: absolute;
+      font-size: 9px;
+      color: rgba(74,158,255,0.4);
+      font-family: var(--mono);
+    }
+    .axis-top    { top: 6px; left: 50%; transform: translateX(-50%); }
+    .axis-bottom { bottom: 6px; left: 50%; transform: translateX(-50%); }
+    .axis-left   { left: 6px; top: 50%; transform: translateY(-50%); }
+    .axis-right  { right: 6px; top: 50%; transform: translateY(-50%); }
+
+    /* ── Bottom tray ── */
+    .bottom-tray {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .throttle-display {
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--dim);
+    }
+    .throttle-display span {
+      color: var(--amber);
+      font-weight: 700;
+    }
+
+    /* ── Connecting overlay ── */
+    .connecting-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(6,11,20,0.97);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 999;
+    }
+    .connecting-overlay.hidden { display: none; }
+
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .conn-text { font-size: 14px; color: var(--text); }
+    .conn-sub  { font-size: 12px; color: var(--dim); text-align: center; max-width: 280px; }
+    .conn-err  { color: var(--red); font-size: 13px; display: none; text-align: center; }
+  </style>
+</head>
+
+<body>
+
+<!-- Connecting overlay -->
+<div class="connecting-overlay" id="connecting-overlay">
+  <div class="spinner"></div>
+  <div class="conn-text">Connecting to Simulator…</div>
+  <div class="conn-sub">Make sure the simulator is open and on the same network.</div>
+  <div class="conn-err" id="conn-err">Could not connect. Check that the drone simulator server is running.</div>
+</div>
+
+<!-- Top HUD -->
+<div class="hud-bar">
+  <div class="hud-logo">🚁 DroneOS</div>
+  <div class="hud-fields">
+    <div class="hud-field"><div class="hud-label">ALT</div><div class="hud-value" id="t-alt">0.0m</div></div>
+    <div class="hud-field"><div class="hud-label">ROLL</div><div class="hud-value" id="t-roll">0°</div></div>
+    <div class="hud-field"><div class="hud-label">PITCH</div><div class="hud-value" id="t-pitch">0°</div></div>
+    <div class="hud-field"><div class="hud-label">YAW</div><div class="hud-value" id="t-yaw">0°</div></div>
+  </div>
+  <div class="conn-badge">
+    <div class="conn-dot" id="top-conn-dot"></div>
+    <span id="top-conn-label">–</span>
+  </div>
+</div>
+
+<!-- Main controller -->
+<div class="controller-wrap">
+  <div class="sticks-row">
+
+    <!-- Left joystick: Throttle (Y) + Yaw (X) -->
+    <div class="joystick-wrap" id="joy-left-wrap">
+      <div class="joystick-outer" id="joy-left">
+        <div class="joystick-knob" id="knob-left"></div>
+        <div class="stick-axis-labels">
+          <div class="axis-label axis-top">▲ THR</div>
+          <div class="axis-label axis-bottom">▼ THR</div>
+          <div class="axis-label axis-left">YAW◄</div>
+          <div class="axis-label axis-right">►YAW</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center panel: aux buttons + motor bars -->
+    <div class="center-panel">
+      <div class="aux-grid">
+        <button class="aux-btn btn-arm" id="btn-arm">
+          <span class="btn-icon">🔴</span>
+          <span id="arm-label">ARM</span>
+        </button>
+        <button class="aux-btn btn-land" id="btn-land">
+          <span class="btn-icon">🛬</span>
+          <span>LAND</span>
+        </button>
+        <button class="aux-btn btn-rth" id="btn-rth">
+          <span class="btn-icon">🏠</span>
+          <span>RTH</span>
+        </button>
+      </div>
+
+      <div class="motor-bars" id="motor-bars">
+        <div class="motor-bar-wrap">
+          <div class="motor-bar-track"><div class="motor-bar-fill" id="mb-1"></div></div>
+          <div class="motor-label">M1</div>
+        </div>
+        <div class="motor-bar-wrap">
+          <div class="motor-bar-track"><div class="motor-bar-fill" id="mb-2"></div></div>
+          <div class="motor-label">M2</div>
+        </div>
+        <div class="motor-bar-wrap">
+          <div class="motor-bar-track"><div class="motor-bar-fill" id="mb-3"></div></div>
+          <div class="motor-label">M3</div>
+        </div>
+        <div class="motor-bar-wrap">
+          <div class="motor-bar-track"><div class="motor-bar-fill" id="mb-4"></div></div>
+          <div class="motor-label">M4</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right joystick: Pitch (Y) + Roll (X) -->
+    <div class="joystick-wrap" id="joy-right-wrap">
+      <div class="joystick-outer" id="joy-right">
+        <div class="joystick-knob" id="knob-right"></div>
+        <div class="stick-axis-labels">
+          <div class="axis-label axis-top">▲ PITCH</div>
+          <div class="axis-label axis-bottom">▼ PITCH</div>
+          <div class="axis-label axis-left">ROLL◄</div>
+          <div class="axis-label axis-right">►ROLL</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="bottom-tray">
+    <div class="throttle-display">THR: <span id="thr-val">0%</span></div>
+    <div class="throttle-display">ROLL: <span id="roll-val">0%</span></div>
+    <div class="throttle-display">PITCH: <span id="pitch-val">0%</span></div>
+    <div class="throttle-display">YAW: <span id="yaw-val">0%</span></div>
+  </div>
+</div>
+
+<script>
+// ─── Setup ───────────────────────────────────────────────────────────────────
+
+const params = new URLSearchParams(window.location.search);
+const sessionId = params.get('session');
+
+if (!sessionId) {
+  document.getElementById('conn-err').style.display = 'block';
+  document.getElementById('conn-err').textContent = 'No session ID in URL. Scan the QR code from the simulator.';
+}
+
+// ─── Socket.io ───────────────────────────────────────────────────────────────
+
+const socket = io({ transports: ['websocket'] });
+let isConnected = false;
+let armedState  = false;
+
+socket.on('connect', () => {
+  console.log('Connected to server');
+  socket.emit('controller-join', sessionId);
+});
+
+socket.on('join-ack', ({ success, error }) => {
+  if (success) {
+    document.getElementById('connecting-overlay').classList.add('hidden');
+    setConnStatus(true);
+  } else {
+    document.getElementById('conn-err').textContent = error || 'Could not join session';
+    document.getElementById('conn-err').style.display = 'block';
+    document.querySelector('.spinner').style.display   = 'none';
+  }
+});
+
+socket.on('telemetry', (data) => {
+  document.getElementById('t-alt').textContent   = data.altitude?.toFixed(1) + 'm';
+  document.getElementById('t-roll').textContent  = data.roll?.toFixed(0) + '°';
+  document.getElementById('t-pitch').textContent = data.pitch?.toFixed(0) + '°';
+  document.getElementById('t-yaw').textContent   = data.yaw?.toFixed(0) + '°';
+});
+
+socket.on('disconnect', () => setConnStatus(false));
+
+function setConnStatus(connected) {
+  isConnected = connected;
+  const dot   = document.getElementById('top-conn-dot');
+  const label = document.getElementById('top-conn-label');
+  dot.className   = `conn-dot ${connected ? 'live' : ''}`;
+  label.textContent = connected ? 'Live' : 'Offline';
+}
+
+// Emit control data at ~60Hz
+const ctrlData = { throttle: 0, yaw: 0, pitch: 0, roll: 0, btnArm: false, btnLand: false };
+
+setInterval(() => {
+  if (isConnected) {
+    socket.volatile.emit('control-input', { ...ctrlData });
+  }
+  // Update bottom tray
+  document.getElementById('thr-val').textContent   = Math.round(ctrlData.throttle * 100) + '%';
+  document.getElementById('roll-val').textContent  = Math.round(ctrlData.roll * 100) + '%';
+  document.getElementById('pitch-val').textContent = Math.round(ctrlData.pitch * 100) + '%';
+  document.getElementById('yaw-val').textContent   = Math.round(ctrlData.yaw * 100) + '%';
+}, 16); // ~60Hz
+
+// ─── Joystick Logic ───────────────────────────────────────────────────────────
+
+function sizeJoystick(outer, knob) {
+  const rect = outer.getBoundingClientRect();
+  const size = Math.min(rect.width, rect.height) * 0.38;
+  knob.style.width  = size * 2 + 'px';
+  knob.style.height = size * 2 + 'px';
+  return size; // max displacement radius
+}
+
+function setupJoystick(outerId, knobId, onMove, returnToCenter = true) {
+  const outer = document.getElementById(outerId);
+  const knob  = document.getElementById(knobId);
+
+  let active = false;
+  let touchId = null;
+  let radius = 0;
+  let cx = 0, cy = 0;
+  let normX = 0, normY = 0;
+
+  function init() {
+    const rect = outer.getBoundingClientRect();
+    cx = rect.left + rect.width  / 2;
+    cy = rect.top  + rect.height / 2;
+    radius = sizeJoystick(outer, knob);
+  }
+
+  function updateKnob(ex, ey) {
+    const rect = outer.getBoundingClientRect();
+    cx = rect.left + rect.width  / 2;
+    cy = rect.top  + rect.height / 2;
+    radius = Math.min(rect.width, rect.height) / 2 - (parseFloat(knob.style.width) / 2) - 4;
+
+    const dx = ex - cx;
+    const dy = ey - cy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const clampedDist = Math.min(dist, radius);
+    const angle = Math.atan2(dy, dx);
+    const nx = Math.cos(angle) * clampedDist;
+    const ny = Math.sin(angle) * clampedDist;
+
+    knob.style.left = (cx - rect.left + nx) + 'px';
+    knob.style.top  = (cy - rect.top  + ny) + 'px';
+    knob.style.transform = 'translate(-50%, -50%)';
+
+    normX =  nx / radius;
+    normY = -ny / radius;  // invert Y: up is positive
+    onMove(normX, normY);
+    knob.classList.add('active');
+  }
+
+  function release() {
+    if (returnToCenter) {
+      const rect = outer.getBoundingClientRect();
+      if (returnToCenter === 'x-only') {
+        // Return X to center, keep Y where it is
+        knob.style.left = rect.width / 2 + 'px';
+        normX = 0;
+      } else {
+        // Return both to center
+        knob.style.left = rect.width  / 2 + 'px';
+        knob.style.top  = rect.height / 2 + 'px';
+        normX = 0; normY = 0;
+      }
+      knob.style.transform = 'translate(-50%, -50%)';
+      onMove(normX, normY);
+    }
+    knob.classList.remove('active');
+    active = false; touchId = null;
+  }
+
+  outer.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (active) return;
+    const t = e.changedTouches[0];
+    touchId = t.identifier;
+    active = true;
+    init();
+    updateKnob(t.clientX, t.clientY);
+  }, { passive: false });
+
+  outer.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === touchId) {
+        updateKnob(t.clientX, t.clientY);
+        break;
+      }
+    }
+  }, { passive: false });
+
+  outer.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === touchId) { release(); break; }
+    }
+  }, { passive: false });
+
+  // Also support mouse for testing on desktop
+  outer.addEventListener('mousedown', (e) => { active = true; updateKnob(e.clientX, e.clientY); });
+  document.addEventListener('mousemove', (e) => { if (active) updateKnob(e.clientX, e.clientY); });
+  document.addEventListener('mouseup', () => { if (active) release(); });
+
+  // Initial position
+  requestAnimationFrame(() => {
+    const rect = outer.getBoundingClientRect();
+    knob.style.left = rect.width  / 2 + 'px';
+    knob.style.top  = rect.height / 2 + 'px';
+    knob.style.transform = 'translate(-50%, -50%)';
+  });
+}
+
+// Size joysticks based on viewport
+function setJoystickSize() {
+  const availH = window.innerHeight - 44 - 40 - 24; // minus HUD, tray, padding
+  const size = Math.min(availH * 0.85, (window.innerWidth / 2 - 100));
+  ['joy-left', 'joy-right'].forEach(id => {
+    const el = document.getElementById(id);
+    el.style.width  = size + 'px';
+    el.style.height = size + 'px';
+  });
+  ['joy-left-wrap', 'joy-right-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    el.style.maxWidth = (size + 10) + 'px';
+  });
+}
+
+setJoystickSize();
+window.addEventListener('resize', setJoystickSize);
+
+// Left: throttle (Y) + yaw (X), throttle stays where released (mode 2), yaw springs to center
+setupJoystick('joy-left', 'knob-left', (x, y) => {
+  ctrlData.yaw      = x;
+  ctrlData.throttle = Math.max(0, (y + 1) / 2);
+}, 'x-only');  // Return X to center, hold Y
+
+// Right: pitch (Y) + roll (X), both spring to center
+setupJoystick('joy-right', 'knob-right', (x, y) => {
+  ctrlData.roll  = x;
+  ctrlData.pitch = y;
+}, true);
+
+// ─── Buttons ─────────────────────────────────────────────────────────────────
+
+document.getElementById('btn-arm').addEventListener('click', () => {
+  armedState = !armedState;
+  ctrlData.btnArm = armedState;
+  const btn = document.getElementById('btn-arm');
+  btn.classList.toggle('active', armedState);
+  btn.querySelector('.btn-icon').textContent = armedState ? '🟢' : '🔴';
+  document.getElementById('arm-label').textContent = armedState ? 'DISARM' : 'ARM';
+  // One-shot emit
+  if (isConnected) socket.emit('control-input', { ...ctrlData, arm_toggle: true });
+});
+
+document.getElementById('btn-land').addEventListener('click', () => {
+  ctrlData.btnLand = true;
+  if (isConnected) socket.emit('control-input', { ...ctrlData, land: true });
+  setTimeout(() => { ctrlData.btnLand = false; }, 200);
+});
+
+document.getElementById('btn-rth').addEventListener('click', () => {
+  if (isConnected) socket.emit('control-input', { rth: true });
+});
+
+// ─── Telemetry motor bars ─────────────────────────────────────────────────────
+// Motor bars updated via telemetry (if host sends motor data)
+socket.on('telemetry', (data) => {
+  if (data.motorPWM) {
+    data.motorPWM.forEach((v, i) => {
+      const bar = document.getElementById(`mb-${i+1}`);
+      if (bar) bar.style.height = (v * 100) + '%';
+    });
+  }
+});
+
+// Keep screen awake (if supported)
+if ('wakeLock' in navigator) {
+  navigator.wakeLock.request('screen').catch(() => {});
+}
+
+// Remove connecting overlay after a timeout if join-ack doesn't come
+setTimeout(() => {
+  if (!isConnected) {
+    document.getElementById('conn-err').style.display = 'block';
+    document.querySelector('.spinner').style.display  = 'none';
+  }
+}, 6000);
+</script>
+
+</body>
+</html>
