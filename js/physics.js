@@ -41,10 +41,15 @@ export const DEFAULT_PARAMS = {
 // ─── PID State ────────────────────────────────────────────────────────────────
 
 const pid = {
-  alt:   { kp: 2.0,  ki: 0.1,  kd: 1.0,   integral: 0, prevError: 0 },
-  roll:  { kp: 0.4,  ki: 0.02, kd: 0.2,   integral: 0, prevError: 0 },
-  pitch: { kp: 0.4,  ki: 0.02, kd: 0.2,   integral: 0, prevError: 0 },
-  yaw:   { kp: 0.6,  ki: 0.01, kd: 0.2,   integral: 0, prevError: 0 },
+  // Altitude hold — tuned for 0.8 kg drone
+  alt:   { kp: 3.5,  ki: 0.15, kd: 1.8,  integral: 0, prevError: 0 },
+  // Attitude stabilisation
+  roll:  { kp: 0.5,  ki: 0.02, kd: 0.25, integral: 0, prevError: 0 },
+  pitch: { kp: 0.5,  ki: 0.02, kd: 0.25, integral: 0, prevError: 0 },
+  yaw:   { kp: 0.7,  ki: 0.01, kd: 0.2,  integral: 0, prevError: 0 },
+  // Position hold (world X/Z) — resists wind displacement
+  posX:  { kp: 0.08, ki: 0.005, kd: 0.12, integral: 0, prevError: 0 },
+  posZ:  { kp: 0.08, ki: 0.005, kd: 0.12, integral: 0, prevError: 0 },
 };
 
 function pidStep(controller, error, dt, rate = null) {
@@ -61,9 +66,14 @@ function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 /**
  * Compute automatic PID motor outputs given current drone state.
  * Returns [m1, m2, m3, m4] in range [0, 1].
+ *
+ * @param {Object} state      - full drone state including position vx/vz
+ * @param {Object} setpoint   - target values
+ * @param {Object} params     - physics params
+ * @param {number} dt         - timestep seconds
  */
 export function autoPIDOutputs(state, setpoint, params, dt) {
-  const { altitude, roll, pitch, yaw, rollRate, pitchRate, yawRate } = state;
+  const { altitude, roll, pitch, yaw, rollRate, pitchRate, yawRate, vx, vz } = state;
   const { targetAlt, targetRoll, targetPitch, targetYaw,
           throttleCmd, rollCmd, pitchCmd, yawCmd } = setpoint;
 
@@ -81,16 +91,41 @@ export function autoPIDOutputs(state, setpoint, params, dt) {
   } else {
     // Fully autonomous hover / position hold
     const altErr  = clamp(targetAlt - altitude, -5, 5);
-    baseThrottle  = hoverThrottle + pidStep(pid.alt, altErr, dt, -state.vy) * 0.1;
+    baseThrottle  = hoverThrottle + pidStep(pid.alt, altErr, dt, -state.vy) * 0.08;
 
-    // targetPitch: + means nose down (forward). pitch: + means nose down.
-    const rollErr  = clamp(targetRoll  - roll,  -45, 45) / 45;
-    const pitchErr = clamp(targetPitch - pitch, -45, 45) / 45; 
-    const yawErr   = clamp(targetYaw   - yaw,   -180, 180) / 180; 
+    // ── Position hold: convert world-frame velocity error → attitude targets ──
+    // When drone has non-zero horizontal velocity, tilt to oppose it (like a real FC).
+    // posX error: if drone drifted beyond target, command pitch to push back.
+    // We store target position in setpoint; if not set, hold current via velocity damping.
+
+    let posRollCorrection  = 0;
+    let posPitchCorrection = 0;
+
+    if (setpoint.holdX !== undefined && setpoint.holdZ !== undefined) {
+      const posErrX = setpoint.holdX - (state.posX || 0);
+      const posErrZ = setpoint.holdZ - (state.posZ || 0);
+      // PID outputs desired velocity → convert to tilt angle (deg)
+      posPitchCorrection = clamp(pidStep(pid.posZ, posErrZ, dt, -vz) * 15, -25, 25);
+      posRollCorrection  = clamp(pidStep(pid.posX, posErrX, dt, -vx) * 15, -25, 25);
+    } else {
+      // No hold position set — use velocity damping only (resist drift)
+      posPitchCorrection = clamp(-vz * 4.0, -20, 20); // oppose Z velocity
+      posRollCorrection  = clamp(-vx * 4.0, -20, 20); // oppose X velocity
+    }
+
+    // Attitude targets: stick commands override position hold when non-zero
+    const stickPitch = pitchCmd * 30; // ±30° from stick
+    const stickRoll  = rollCmd  * 30;
+    const totalTargetPitch = (Math.abs(pitchCmd) > 0.05) ? stickPitch : -posPitchCorrection;
+    const totalTargetRoll  = (Math.abs(rollCmd)  > 0.05) ? stickRoll  : posRollCorrection;
+
+    const rollErr  = clamp(totalTargetRoll  - roll,  -45, 45) / 45;
+    const pitchErr = clamp(totalTargetPitch - pitch, -45, 45) / 45;
+    const yawErr   = clamp(targetYaw        - yaw,   -180, 180) / 180;
 
     // Use actual angular velocity (rate) to prevent extreme derivative jitter
-    dRoll  = pidStep(pid.roll,  rollErr,  dt, -rollRate / 45) * 0.25;
-    dPitch = pidStep(pid.pitch, pitchErr, dt, -pitchRate / 45) * 0.25;
+    dRoll  = pidStep(pid.roll,  rollErr,  dt, -rollRate / 45) * 0.28;
+    dPitch = pidStep(pid.pitch, pitchErr, dt, -pitchRate / 45) * 0.28;
     dYaw   = pidStep(pid.yaw,   yawErr,   dt, -yawRate / 180) * 0.15;
   }
 
@@ -267,5 +302,3 @@ function rotateByQuat(v, q) {
     z: vz + qw * tz + qx * ty - qy * tx,
   };
 }
-
-

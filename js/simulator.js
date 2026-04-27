@@ -3,7 +3,7 @@
  *
  * Camera modes:
  *   'free'       — OrbitControls, user navigates freely (Blender-style)
- *   'drone-lock' — Camera tracks drone position; only rotation is free
+ *   'drone-lock' — Camera FOLLOWS drone; offset is maintained so drone stays in frame
  */
 
 'use strict';
@@ -30,6 +30,7 @@ export class DroneSimulator {
     this.setpoint = {
       targetAlt: 1.0, targetRoll: 0, targetPitch: 0, targetYaw: 0,
       throttleCmd: null, rollCmd: 0, pitchCmd: 0, yawCmd: 0,
+      holdX: undefined, holdZ: undefined,
     };
 
     // Wind state
@@ -101,8 +102,8 @@ export class DroneSimulator {
     this.orbitControls.target.set(0, 0.5, 0);
     this.orbitControls.update();
 
-    // Drone-lock offsets
-    this._lockOffset = new THREE.Vector3(3, 2.5, 4);
+    // Drone-lock: store camera→target offset so camera moves WITH drone
+    this._lockCamOffset = new THREE.Vector3(3, 2.5, 4); // will be updated on mode switch
   }
 
   // ─── Physics World ────────────────────────────────────────────────────────
@@ -121,6 +122,9 @@ export class DroneSimulator {
     });
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     this.world.addBody(groundBody);
+
+    // Register preStep ONCE here so it's always alive
+    this._hasPreStepHandler = false;
   }
 
   // ─── Drone ────────────────────────────────────────────────────────────────
@@ -256,7 +260,15 @@ export class DroneSimulator {
     // ── Camera update ──────────────────────────────────────────────────────
     if (this.cameraMode === 'drone-lock') {
       const dronePos = this.drone.getPosition();
-      this.orbitControls.target.set(dronePos.x, dronePos.y, dronePos.z);
+      const droneVec = new THREE.Vector3(dronePos.x, dronePos.y, dronePos.z);
+
+      // Move BOTH camera position and target together so the view stays locked
+      const newTarget = droneVec.clone();
+      const newCamPos = droneVec.clone().add(this._lockCamOffset);
+
+      // Smoothly interpolate for a cinematic feel
+      this.orbitControls.target.lerp(newTarget, 0.12);
+      this.camera.position.lerp(newCamPos, 0.12);
     }
     this.orbitControls.update();
 
@@ -273,7 +285,6 @@ export class DroneSimulator {
     const euler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(quat.x, quat.y, quat.z, quat.w), 'YXZ');
     
     // Build state object (for user code and PID)
-    // Three.js: X=Pitch (forward/back), Z=Roll (left/right), Y=Yaw
     const state = {
       altitude:    pos.y,
       roll:        -euler.z * (180 / Math.PI),  // + means roll right (right side down)
@@ -283,6 +294,7 @@ export class DroneSimulator {
       pitchRate:   -angVel.x * (180 / Math.PI), // Pitch is around X axis
       yawRate:     -angVel.y * (180 / Math.PI), // Yaw is around Y axis
       vx: vel.x, vy: vel.y, vz: vel.z,
+      posX: pos.x, posZ: pos.z,
       dt,
       // Stick commands — readable in Arduino loop()
       throttle:  this.setpoint.throttleCmd ?? 0,
@@ -296,11 +308,8 @@ export class DroneSimulator {
 
     if (this.drone.isArmed) {
       if (this.autoMode) {
-        // Map stick commands to target angles in auto mode
-        this.setpoint.targetRoll = this.setpoint.rollCmd * 45;   // +/- 45 degrees
-        this.setpoint.targetPitch = this.setpoint.pitchCmd * 45; // +/- 45 degrees
+        // Yaw: rotate target heading at yawCmd rate
         this.setpoint.targetYaw += this.setpoint.yawCmd * 90 * dt; // +/- 90 deg/sec
-        
         // Wrap target yaw to [-180, 180]
         if (this.setpoint.targetYaw > 180) this.setpoint.targetYaw -= 360;
         if (this.setpoint.targetYaw < -180) this.setpoint.targetYaw += 360;
@@ -319,14 +328,6 @@ export class DroneSimulator {
         // Keyboard/joystick direct control via PID
         motorPWM = autoPIDOutputs(state, this.setpoint, this.params, dt);
       }
-    }
-
-    if (this.drone.isArmed && !this._debugCounter) {
-      this._debugCounter = 1;
-    } else if (this.drone.isArmed) {
-      this._debugCounter++;
-    } else {
-      this._debugCounter = 0;
     }
 
     this.drone.motorPWM = motorPWM;
@@ -372,7 +373,7 @@ export class DroneSimulator {
       z: this.windForce.z + turbulence.z,
     };
 
-    // ── Pre-Step Physics Update ───────────────────────────────────────────
+    // ── Pre-Step Physics Update (registered only ONCE) ────────────────────
     if (!this._hasPreStepHandler) {
       this.world.addEventListener('preStep', () => {
         if (!this.isRunning) return;
@@ -382,18 +383,12 @@ export class DroneSimulator {
         const angVel = droneBody.angularVelocity;
         const quat = droneBody.quaternion;
         const pos = droneBody.position;
-        
-        const totalWind = {
-          x: this.windForce.x + (this.windGust?.x || 0),
-          y: this.windForce.y + (this.windGust?.y || 0),
-          z: this.windForce.z + (this.windGust?.z || 0),
-        };
 
         const { force, torque } = computeForces(
           { velocity: vel, angularVelocity: angVel, quaternion: quat, position: pos },
           this.drone.motorPWM,
           this.params,
-          totalWind,
+          this._currentWind || { x: 0, y: 0, z: 0 },
           this.drone.isOnGround()
         );
 
@@ -409,6 +404,9 @@ export class DroneSimulator {
       });
       this._hasPreStepHandler = true;
     }
+
+    // Store current wind so preStep handler can access it
+    this._currentWind = totalWind;
 
     // ── Step world ────────────────────────────────────────────────────────
     this.world.step(1 / 120, dt, 3);
@@ -438,7 +436,14 @@ export class DroneSimulator {
   // ─── Public API ───────────────────────────────────────────────────────────
 
   toggleCameraMode() {
-    this.cameraMode = this.cameraMode === 'free' ? 'drone-lock' : 'free';
+    if (this.cameraMode === 'free') {
+      this.cameraMode = 'drone-lock';
+      // Capture the current camera-to-target offset so the view doesn't jump
+      const target = this.orbitControls.target.clone();
+      this._lockCamOffset = this.camera.position.clone().sub(target);
+    } else {
+      this.cameraMode = 'free';
+    }
     return this.cameraMode;
   }
 
@@ -450,21 +455,14 @@ export class DroneSimulator {
     this.drone.reset();
     this.windForce = { x: 0, y: 0, z: 0 };
     this.windGust  = null;
+    this._currentWind = { x: 0, y: 0, z: 0 };
     resetPID();
-    let _targetAlt = 1.0;
+    resetTurbulence();
     this.setpoint = {
-      targetRoll: 0, targetPitch: 0, targetYaw: 0,
+      targetAlt: 1.0, targetRoll: 0, targetPitch: 0, targetYaw: 0,
       throttleCmd: null, rollCmd: 0, pitchCmd: 0, yawCmd: 0,
+      holdX: undefined, holdZ: undefined,
     };
-    Object.defineProperty(this.setpoint, 'targetAlt', {
-      get: () => _targetAlt,
-      set: (val) => {
-        if (val < 0.9 && _targetAlt >= 0.9) {
-          console.trace(`targetAlt modified from ${_targetAlt} to ${val}`);
-        }
-        _targetAlt = val;
-      }
-    });
     this.orbitControls.target.set(0, 0.5, 0);
     this.camera.position.set(3, 2.5, 4);
     this.orbitControls.update();
@@ -483,6 +481,11 @@ export class DroneSimulator {
     if (!armed) {
       this.drone.motorPWM = [0, 0, 0, 0];
       resetPID();
+    } else if (this.autoMode) {
+      // When arming in auto mode, lock current position as hold target
+      const pos = this.drone.body.position;
+      this.setpoint.holdX = pos.x;
+      this.setpoint.holdZ = pos.z;
     }
   }
 
@@ -494,7 +497,23 @@ export class DroneSimulator {
       // Reset target angles to hover straight
       this.setpoint.targetRoll = 0;
       this.setpoint.targetPitch = 0;
-      this.setpoint.targetYaw = this.drone.body ? new THREE.Euler().setFromQuaternion(new THREE.Quaternion(this.drone.body.quaternion.x, this.drone.body.quaternion.y, this.drone.body.quaternion.z, this.drone.body.quaternion.w), 'YXZ').y * (180 / Math.PI) : 0;
+      // Capture current yaw as target
+      const quat = this.drone.body?.quaternion;
+      if (quat) {
+        const euler = new THREE.Euler().setFromQuaternion(
+          new THREE.Quaternion(quat.x, quat.y, quat.z, quat.w), 'YXZ'
+        );
+        this.setpoint.targetYaw = -euler.y * (180 / Math.PI);
+      }
+      // Lock current horizontal position
+      const pos = this.drone.body?.position;
+      if (pos) {
+        this.setpoint.holdX = pos.x;
+        this.setpoint.holdZ = pos.z;
+      }
+    } else {
+      this.setpoint.holdX = undefined;
+      this.setpoint.holdZ = undefined;
     }
     resetPID();
   }

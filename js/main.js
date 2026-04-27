@@ -194,13 +194,24 @@ async function init() {
   controls = new ControlInterface(ctrlContainer, {
     onInput: (input) => {
       if (simulator.autoMode) {
-        // In auto mode, throttle stick adjusts target altitude, sticks adjust attitude
-        // throttle [0..1] → map center=0.5 to "no change", edges = climb/descend
-        const throttleDelta = (input.throttle - 0.5) * 0.15; // m/s rate
+        // Throttle stick adjusts target altitude at a fixed rate
+        const throttleDelta = (input.throttle - 0.5) * 0.2; // m/s per tick
         simulator.setpoint.targetAlt = Math.max(0.1,
           (simulator.setpoint.targetAlt || 1.0) + throttleDelta
         );
-        // Roll/pitch/yaw still direct commanded
+        // When pitch/roll sticks are near center, update holdX/Z to current position
+        // (so the drone holds wherever it drifted to when you release)
+        if (Math.abs(input.pitch) < 0.05 && Math.abs(input.roll) < 0.05) {
+          const pos = simulator.drone.body.position;
+          // Only update if there was prior stick movement (avoids overwriting on first frame)
+          if (simulator._hadStickInput) {
+            simulator.setpoint.holdX = pos.x;
+            simulator.setpoint.holdZ = pos.z;
+            simulator._hadStickInput = false;
+          }
+        } else {
+          simulator._hadStickInput = true;
+        }
         simulator.setControlInput(null, input.yaw, input.pitch, input.roll);
       } else {
         simulator.setControlInput(input.throttle, input.yaw, input.pitch, input.roll);

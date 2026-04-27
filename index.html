@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-  <!-- QR Code library - use older qrcodejs that's guaranteed to work -->
+  <!-- QR Code library -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <!-- Socket.io client -->
   <script src="/socket.io/socket.io.js"></script>
@@ -45,6 +45,11 @@
         <span class="status-dot connected"></span>
         <span>Server Live</span>
       </div>
+      <!-- Theme toggle button -->
+      <button class="theme-toggle-btn" id="btn-theme" title="Toggle light / dark theme" aria-label="Toggle theme">
+        <span class="theme-icon" id="theme-icon">☀️</span>
+        <span class="theme-label" id="theme-label">Light</span>
+      </button>
     </div>
   </header>
 
@@ -97,6 +102,15 @@
 
   </main>
 
+  <!-- Fullscreen overlay for editor -->
+  <div class="editor-fullscreen-overlay hidden" id="editor-fs-overlay">
+    <div class="editor-fs-header">
+      <span class="editor-fs-title">📝 Code Editor — Fullscreen</span>
+      <button class="editor-fs-close" id="btn-fs-close" title="Exit Fullscreen (Esc)">✕ Exit</button>
+    </div>
+    <div class="editor-fs-body" id="editor-fs-body"></div>
+  </div>
+
   <!-- Import map for ES modules — resolves bare specifiers to CDN URLs -->
   <script type="importmap">
   {
@@ -111,10 +125,9 @@
   <!-- Bootstrap -->
   <script type="module" src="js/main.js"></script>
 
-  <!-- Overlay button wiring (non-module) -->
+  <!-- Overlay button wiring + theme + fullscreen (non-module) -->
   <script>
-    // These buttons wire after main.js inits the simulator
-    // Using window events to bridge module/non-module
+    // ── Sim action buttons ─────────────────────────────────────────────────
     window.addEventListener('sim-ready', () => {});
 
     document.getElementById('btn-reset')?.addEventListener('click', () => {
@@ -126,6 +139,68 @@
     document.getElementById('btn-cam')?.addEventListener('click', () => {
       window.dispatchEvent(new CustomEvent('sim-action', { detail: 'camera' }));
     });
+
+    // ── Theme Toggle ───────────────────────────────────────────────────────
+    (function() {
+      const root     = document.documentElement;
+      const btn      = document.getElementById('btn-theme');
+      const icon     = document.getElementById('theme-icon');
+      const label    = document.getElementById('theme-label');
+      let isDark     = true;  // starts dark
+
+      function applyTheme(dark) {
+        isDark = dark;
+        root.setAttribute('data-theme', dark ? 'dark' : 'light');
+        icon.textContent  = dark ? '☀️' : '🌙';
+        label.textContent = dark ? 'Light' : 'Dark';
+        localStorage.setItem('dronesim_theme', dark ? 'dark' : 'light');
+      }
+
+      // Restore saved theme
+      const saved = localStorage.getItem('dronesim_theme');
+      if (saved === 'light') applyTheme(false);
+
+      btn.addEventListener('click', () => applyTheme(!isDark));
+    })();
+
+    // ── Editor Fullscreen ──────────────────────────────────────────────────
+    (function() {
+      const overlay  = document.getElementById('editor-fs-overlay');
+      const fsBody   = document.getElementById('editor-fs-body');
+      const closeBtn = document.getElementById('btn-fs-close');
+      const editorPanel = document.getElementById('editor-panel');
+      let monacoInstance = null;
+
+      // Expose a hook so editor.js can register the Monaco instance
+      window.__registerMonaco = function(editor) {
+        monacoInstance = editor;
+      };
+
+      function openFullscreen() {
+        overlay.classList.remove('hidden');
+        // Move the editor DOM into the fullscreen body
+        fsBody.appendChild(editorPanel);
+        if (monacoInstance) monacoInstance.layout();
+        document.addEventListener('keydown', onEsc);
+      }
+
+      function closeFullscreen() {
+        overlay.classList.add('hidden');
+        // Move the editor DOM back to its original panel
+        document.getElementById('editor-outer').appendChild(editorPanel);
+        if (monacoInstance) monacoInstance.layout();
+        document.removeEventListener('keydown', onEsc);
+      }
+
+      function onEsc(e) {
+        if (e.key === 'Escape') closeFullscreen();
+      }
+
+      closeBtn.addEventListener('click', closeFullscreen);
+
+      // The fullscreen button is injected by editor.js; listen for it
+      window.addEventListener('editor-fullscreen-open', openFullscreen);
+    })();
   </script>
 </body>
 </html>

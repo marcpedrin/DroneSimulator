@@ -70,7 +70,7 @@ export class ControlInterface {
           <div class="qr-wrapper">
             <div class="qr-label">Scan to open mobile controller</div>
             <div class="qr-canvas-wrap" id="qr-canvas-wrap" style="display:flex;justify-content:center;align-items:center;"></div>
-            <div class="qr-url" id="qr-url-text">Loading...</div>
+            <a class="qr-url" id="qr-url-text" href="#" target="_blank" rel="noopener noreferrer">Loading...</a>
             <div class="qr-status" id="qr-conn-status">
               <span class="conn-dot disconnected"></span>
               <span id="conn-label">Awaiting connection</span>
@@ -179,7 +179,8 @@ export class ControlInterface {
       });
       if (urlText) {
         const u = this._qrUrl;
-        urlText.textContent = u.length > 50 ? u.slice(0, 47) + '…' : u;
+        urlText.textContent = u.length > 50 ? u.slice(0, 47) + '\u2026' : u;
+        urlText.href = u;
       }
     } else {
       // Retry after 500ms if QRCode library not yet loaded

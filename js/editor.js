@@ -236,6 +236,9 @@ export class CodeEditor {
           <button class="btn-auto-mode" id="btn-auto" title="Use built-in PID flight controller">
             <span class="auto-icon">🤖</span> Auto Mode
           </button>
+          <button class="btn-fullscreen" id="btn-editor-fs" title="Fullscreen editor">
+            ⛶ Fullscreen
+          </button>
           <button class="btn-run-code" id="btn-run" title="Compile & apply code (Ctrl+Enter)">
             ▶ Apply
           </button>
@@ -254,6 +257,9 @@ export class CodeEditor {
 
     document.getElementById('btn-run').addEventListener('click', () => this._applyCode());
     document.getElementById('btn-auto').addEventListener('click', () => this._toggleAutoMode());
+    document.getElementById('btn-editor-fs')?.addEventListener('click', () => {
+      window.dispatchEvent(new Event('editor-fullscreen-open'));
+    });
   }
 
   _loadMonaco() {
@@ -326,6 +332,9 @@ export class CodeEditor {
       monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
       () => this._applyCode()
     );
+
+    // Register with global fullscreen hook
+    if (window.__registerMonaco) window.__registerMonaco(this.editors[0]);
 
     // Apply defaults on first load
     this._applyCode();
