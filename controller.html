@@ -609,7 +609,8 @@ function setupJoystick(outerId, knobId, onMove, returnToCenter = true) {
 // Size joysticks based on viewport
 function setJoystickSize() {
   const availH = window.innerHeight - 44 - 40 - 24; // minus HUD, tray, padding
-  const size = Math.min(availH * 0.85, (window.innerWidth / 2 - 100));
+  // Increase from 0.85 to 0.95 height, and reduce horizontal padding deduction from 100 to 40
+  const size = Math.min(availH * 0.95, (window.innerWidth / 2 - 40));
   ['joy-left', 'joy-right'].forEach(id => {
     const el = document.getElementById(id);
     el.style.width  = size + 'px';

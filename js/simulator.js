@@ -256,7 +256,13 @@ export class DroneSimulator {
     // ── Camera update ──────────────────────────────────────────────────────
     if (this.cameraMode === 'drone-lock') {
       const dronePos = this.drone.getPosition();
-      this.orbitControls.target.set(dronePos.x, dronePos.y, dronePos.z);
+      // Calculate current offset from target
+      const offset = new THREE.Vector3().subVectors(this.camera.position, this.orbitControls.target);
+      
+      this.orbitControls.target.copy(dronePos);
+      
+      // Move camera to maintain the exact same offset
+      this.camera.position.copy(dronePos).add(offset);
     }
     this.orbitControls.update();
 
