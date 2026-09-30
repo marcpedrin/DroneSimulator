@@ -156,10 +156,14 @@ async function init() {
 
   // ── Get server info (LAN IP) ──────────────────────────────────────────────
   let controllerURL = `${window.location.origin}/controller?session=${sessionId}`;
-  try {
-    const info = await fetch('/api/server-info').then(r => r.json());
-    controllerURL = `http://${info.lanIp}:${info.port}/controller?session=${sessionId}`;
-  } catch (e) { /* use origin fallback */ }
+  // Only swap in the LAN IP when running locally; a hosted deploy is reachable at its own origin.
+  const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+  if (isLocal) {
+    try {
+      const info = await fetch('/api/server-info').then(r => r.json());
+      controllerURL = `http://${info.lanIp}:${info.port}/controller?session=${sessionId}`;
+    } catch (e) { /* use origin fallback */ }
+  }
 
   // ── Simulator ─────────────────────────────────────────────────────────────
   const simContainer = document.getElementById('sim-panel');
